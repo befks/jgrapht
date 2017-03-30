@@ -99,6 +99,95 @@ public class ChinesePostman<V, E>
 
     }
 
+
+    private void findPairs(Set<V> set,
+            List<UnorderedPair<V, V>> currentResults,
+            List<List<UnorderedPair<V, V>>> results)
+    {
+        if (set.size() < 2)
+        {
+            results.add(new ArrayList<UnorderedPair<V, V>>(currentResults));
+            return;
+        }
+        List<V> list = new ArrayList<V>(set);
+        V first = list.remove(0);
+        for (int i=0; i<list.size(); i++)
+        {
+            V second = list.get(i);
+            Set<V> nextSet = new LinkedHashSet<V>(list);
+            nextSet.remove(second);
+
+            UnorderedPair<V, V> pair = new UnorderedPair<>(first, second);
+            currentResults.add(pair);
+            findPairs(nextSet, currentResults, results);
+            currentResults.remove(pair);
+        }
+    }
+    private List<UnorderedPair<V,V>> matchPairsBruteForce(Set<V> set,
+            final Map<UnorderedPair<V, V>, GraphPath<V, E>> shortestPaths)
+    {
+        List<UnorderedPair<V,V>> chosen = null;
+            ArrayList<List<UnorderedPair<V, V>>> pairlists = new ArrayList<>();
+            findPairs(set, new ArrayList<UnorderedPair<V, V>>(), pairlists);
+
+
+            double weight = -1;
+            for (List<UnorderedPair<V, V>> pairlist : pairlists)
+            {
+                double possibleWeight = 0;
+                for (UnorderedPair<V, V> pair : pairlist)
+                {
+                    possibleWeight += shortestPaths.get(pair).getWeight();
+                }
+                if (weight == -1 || possibleWeight < weight)
+                {
+                    weight = possibleWeight;
+                    chosen = pairlist;
+                }
+            }
+            return chosen;
+    }
+
+    private List<UnorderedPair<V,V>> matchPairsHeuristic(Set<V> set,
+            final Map<UnorderedPair<V, V>, GraphPath<V, E>> shortestPaths)
+    {
+        TreeSet<UnorderedPair<V,V>> pairs = new TreeSet<>(new Comparator<UnorderedPair<V,V>>()
+                {
+                    public int compare(UnorderedPair<V,V> a, UnorderedPair<V,V> b)
+                    {
+                        int res = (int) Math.signum(shortestPaths.get(a).getWeight() - shortestPaths.get(b).getWeight());
+                        // We're not allowed to return 0 if the paths are different.
+                        if (res == 0)
+                        {
+                            res = a.toString().compareTo(b.toString());
+                        }
+                        return res;
+                    }
+                }
+                );
+        pairs.addAll(shortestPaths.keySet());
+        List<UnorderedPair<V,V>> res = new ArrayList<>();
+        while(!pairs.isEmpty())
+        {
+            UnorderedPair<V,V> picked = pairs.first();
+            res.add(picked);
+            List<UnorderedPair<V,V>> toRemove = new ArrayList<>();
+            for (UnorderedPair<V,V> p : pairs)
+            {
+                if (p.getFirst().equals(picked.getFirst()) || p.getSecond().equals(picked.getFirst())
+                    ||p.getFirst().equals(picked.getSecond()) || p.getSecond().equals(picked.getSecond()))
+                {
+                    toRemove.add(p);
+                }
+            }
+            for (UnorderedPair<V,V> p : toRemove)
+            {
+                pairs.remove(p);
+            }
+        }
+        return res;
+    }
+
     /**
      * Solves the CPP for undirected graphs
      * 
@@ -107,16 +196,13 @@ public class ChinesePostman<V, E>
      */
     private GraphPath<V, E> solveCPPUndirected(Graph<V, E> graph)
     {
-
         // 1. Find all odd degree vertices (there should be an odd number of those)
         List<V> oddDegreeVertices =
-            graph.vertexSet().stream().filter(v -> graph.degreeOf(v) % 2 == 1).collect(
+        graph.vertexSet().stream().filter(v -> graph.degreeOf(v) % 2 == 1).collect(
                 Collectors.toList());
 
-        System.out.println("odd deg vertices: "+oddDegreeVertices);
-
         // 2. Compute all pairwise shortest paths for the oddDegreeVertices
-        Map<Pair<V, V>, GraphPath<V, E>> shortestPaths = new HashMap<>();
+        Map<UnorderedPair<V, V>, GraphPath<V, E>> shortestPaths = new HashMap<>();
         ShortestPathAlgorithm<V, E> sp = new DijkstraShortestPath<>(graph);
         for (int i = 0; i < oddDegreeVertices.size() - 1; i++) {
             for (int j = i + 1; j < oddDegreeVertices.size(); j++) {
@@ -132,37 +218,20 @@ public class ChinesePostman<V, E>
         // duplicate the
         // nodes and solve the problem on a complete bipartite graph. This obviously is inefficient
         // and should be replaced as soon as we can solve matchings on complete graphs!
-        Graph<Integer, DefaultWeightedEdge> auxGraph =
-            new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
-        Set<Integer> partition1 =
-            IntStream.range(0, oddDegreeVertices.size()).boxed().collect(Collectors.toSet());
-        Set<Integer> partition2 =
-            IntStream.range(oddDegreeVertices.size(), 2 * oddDegreeVertices.size()).boxed().collect(
-                Collectors.toSet());
+        Set<V> set = new LinkedHashSet<V>(oddDegreeVertices);
 
-        Graphs.addAllVertices(auxGraph, partition1);
-        Graphs.addAllVertices(auxGraph, partition2);
-        System.out.println("partition1: "+partition1);
-        System.out.println("partition2: "+partition2);
-
-        for (int i = 0; i < oddDegreeVertices.size(); i++) {
-            for (int j = 0; j < oddDegreeVertices.size(); j++) {
-                if (i == j)
-                    Graphs.addEdge(auxGraph, i, j + oddDegreeVertices.size(), Double.MAX_VALUE);
-                else {
-                    V u = oddDegreeVertices.get(i);
-                    V v = oddDegreeVertices.get(j);
-                    Graphs.addEdge(
-                        auxGraph, i, j + oddDegreeVertices.size(),
-                        shortestPaths.get(new UnorderedPair<>(u, v)).getWeight());
-                    System.out.println("matching edge: ("+i+","+(j+oddDegreeVertices.size())+"): weight: "+shortestPaths.get(new UnorderedPair<>(u, v)).getWeight()+" u: "+u+" v: "+v);
-                }
-            }
+        List<UnorderedPair<V, V>> chosen = null;
+        if (set.size() > 10)
+        {
+            chosen = matchPairsHeuristic(set, shortestPaths);
         }
-        MatchingAlgorithm.Matching<DefaultWeightedEdge> matching =
-            new KuhnMunkresMinimalWeightBipartitePerfectMatching<>(auxGraph, partition1, partition2)
-                .getMatching();
-        System.out.println("matching: "+matching);
+        else
+        {
+            chosen = matchPairsBruteForce(set, shortestPaths);
+        }
+
+        Graph<Integer, DefaultWeightedEdge> auxGraph =
+        new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
 
         // 4. On the original graph, add shortcuts between the odd vertices. These shortcuts have
         // been identified by the matching algorithm. A shortcut from u to v
@@ -172,18 +241,14 @@ public class ChinesePostman<V, E>
         Graphs.addAllVertices(eulerGraph, graph.vertexSet());
         Graphs.addAllEdges(eulerGraph, graph, graph.edgeSet());
         Map<E, GraphPath<V, E>> shortcutEdges = new HashMap<>();
-        for (DefaultWeightedEdge e : matching.getEdges()) {
-            int i = auxGraph.getEdgeSource(e);
-            int j = auxGraph.getEdgeTarget(e) - oddDegreeVertices.size();
-            if (j > i)
-                continue;
-            V u = oddDegreeVertices.get(i);
-            V v = oddDegreeVertices.get(j);
+
+        for (UnorderedPair<V, V> pair : chosen) {
+            GraphPath<V,E> path = shortestPaths.get(pair);
+            V u = pair.getFirst();
+            V v = pair.getSecond();
             E shortcutEdge = eulerGraph.addEdge(u, v);
-            System.out.println("adding shortcut: "+shortcutEdge);
-            shortcutEdges.put(shortcutEdge, shortestPaths.get(new UnorderedPair<>(u, v)));
+            shortcutEdges.put(shortcutEdge, path);
         }
-        System.out.println("eulergraph: "+eulerGraph);
 
         EulerianCycleAlgorithm<V, E> eulerianCycleAlgorithm = new HierholzerEulerianCycle<>();
         GraphPath<V, E> pathWithShortcuts = eulerianCycleAlgorithm.getEulerianCycle(eulerGraph);
@@ -232,7 +297,7 @@ public class ChinesePostman<V, E>
         // a number of times. The number of duplicates of a
         // node equals its imbalance.
         Graph<Integer, DefaultWeightedEdge> auxGraph =
-            new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
+        new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
         Map<Integer, V> duplicateMap = new HashMap<>();
         Set<Integer> negImbalancedPartition = new HashSet<>();
         Set<Integer> postImbalancedPartition = new HashSet<>();
@@ -263,7 +328,7 @@ public class ChinesePostman<V, E>
             }
         }
         MatchingAlgorithm.Matching<DefaultWeightedEdge> matching =
-            new KuhnMunkresMinimalWeightBipartitePerfectMatching<>(
+        new KuhnMunkresMinimalWeightBipartitePerfectMatching<>(
                 auxGraph, negImbalancedPartition, postImbalancedPartition).getMatching();
 
         // 4. On the original graph, add shortcuts between the odd vertices. These shortcuts have
@@ -290,8 +355,8 @@ public class ChinesePostman<V, E>
     }
 
     private GraphPath<V, E> replaceShortcutEdges(
-        Graph<V, E> inputGraph, GraphPath<V, E> pathWithShortcuts,
-        Map<E, GraphPath<V, E>> shortcutEdges)
+            Graph<V, E> inputGraph, GraphPath<V, E> pathWithShortcuts,
+            Map<E, GraphPath<V, E>> shortcutEdges)
     {
         V startVertex = pathWithShortcuts.getStartVertex();
         V endVertex = pathWithShortcuts.getEndVertex();
@@ -299,8 +364,8 @@ public class ChinesePostman<V, E>
         List<E> edgeList = new ArrayList<>();
 
         List<V> verticesInPathWithShortcuts = pathWithShortcuts.getVertexList(); // should contain
-                                                                                 // at least 2
-                                                                                 // vertices
+        // at least 2
+        // vertices
         List<E> edgesInPathWithShortcuts = pathWithShortcuts.getEdgeList(); // cannot be empty
         for (int i = 0; i < verticesInPathWithShortcuts.size() - 1; i++) {
             vertexList.add(verticesInPathWithShortcuts.get(i));
@@ -310,15 +375,15 @@ public class ChinesePostman<V, E>
                 // replace shortcut edge by its implied path
                 GraphPath<V, E> shortcut = shortcutEdges.get(edge);
                 if (vertexList.get(vertexList.size() - 1).equals(shortcut.getStartVertex())) { // check
-                                                                                               // direction
-                                                                                               // of
-                                                                                               // path
+                    // direction
+                    // of
+                    // path
                     vertexList.addAll(
-                        shortcut.getVertexList().subList(1, shortcut.getVertexList().size() - 1));
+                            shortcut.getVertexList().subList(1, shortcut.getVertexList().size() - 1));
                     edgeList.addAll(shortcut.getEdgeList());
                 } else {
                     List<V> reverseVertices = new ArrayList<>(
-                        shortcut.getVertexList().subList(1, shortcut.getVertexList().size() - 1));
+                            shortcut.getVertexList().subList(1, shortcut.getVertexList().size() - 1));
                     Collections.reverse(reverseVertices);
                     List<E> reverseEdges = new ArrayList<>(shortcut.getEdgeList());
                     Collections.reverse(reverseEdges);
@@ -333,7 +398,7 @@ public class ChinesePostman<V, E>
         double pathWeight = edgeList.stream().mapToDouble(inputGraph::getEdgeWeight).sum();
 
         return new GraphWalk<>(
-            inputGraph, startVertex, endVertex, vertexList, edgeList, pathWeight);
+                inputGraph, startVertex, endVertex, vertexList, edgeList, pathWeight);
     }
 
 }
